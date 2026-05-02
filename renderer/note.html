@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>便签</title>
+  <link rel="stylesheet" href="note.css">
+</head>
+<body>
+  <div class="note-container">
+    <!-- 顶部工具栏 -->
+    <div class="toolbar">
+      <div class="color-picker">
+        <span class="color-btn active" data-color="#FEF08A" style="background:#FEF08A"></span>
+        <span class="color-btn" data-color="#BFDBFE" style="background:#BFDBFE"></span>
+        <span class="color-btn" data-color="#BBF7D0" style="background:#BBF7D0"></span>
+        <span class="color-btn" data-color="#FECACA" style="background:#FECACA"></span>
+        <span class="color-btn" data-color="#E9D5FF" style="background:#E9D5FF"></span>
+        <span class="color-btn" data-color="#FED7AA" style="background:#FED7AA"></span>
+      </div>
+      <div class="toolbar-actions">
+        <button class="icon-btn" id="btn-pin" title="置顶">📌</button>
+        <button class="icon-btn" id="btn-reminder" title="设置提醒">⏰</button>
+        <button class="icon-btn" id="btn-trash" title="删除">🗑️</button>
+      </div>
+    </div>
+
+    <!-- 文本编辑区 -->
+    <div class="note-content" contenteditable="true" placeholder="在此输入便签内容..."></div>
+
+    <!-- 底部拖拽手柄 -->
+    <div class="resize-handle"></div>
+  </div>
+
+  <!-- 提醒设置弹窗 -->
+  <div class="reminder-modal" id="reminder-modal" style="display:none;">
+    <div class="reminder-backdrop"></div>
+    <div class="reminder-panel">
+      <h3>设置提醒时间</h3>
+      <input type="datetime-local" id="reminder-input">
+      <div class="reminder-actions">
+        <button id="reminder-clear" class="btn-text">清除提醒</button>
+        <button id="reminder-save" class="btn-primary">保存</button>
+        <button id="reminder-cancel" class="btn-text">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="note.js"></script>
+</body>
+</html>

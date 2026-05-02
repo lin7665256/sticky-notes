@@ -1,0 +1,221 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: 'Microsoft YaHei', 'PingFang SC', -apple-system, sans-serif;
+  font-size: 14px;
+  user-select: none;
+  border-radius: 8px;
+}
+
+/* ── 便签容器 ────────────────────────────── */
+.note-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 2px 2px 12px rgba(0,0,0,0.15);
+  background: #FEF08A;
+  transition: background 0.3s;
+  border: 1px solid rgba(0,0,0,0.08);
+}
+
+/* ── 工具栏 ──────────────────────────────── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: rgba(0,0,0,0.04);
+  -webkit-app-region: drag;
+  min-height: 36px;
+  gap: 6px;
+}
+
+.color-picker {
+  display: flex;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.color-btn {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: border-color 0.2s, transform 0.15s;
+}
+
+.color-btn:hover {
+  transform: scale(1.2);
+}
+
+.color-btn.active {
+  border-color: rgba(0,0,0,0.5);
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+  line-height: 1;
+}
+
+.icon-btn:hover {
+  background: rgba(0,0,0,0.1);
+}
+
+.icon-btn.pinned {
+  background: rgba(0,0,0,0.12);
+}
+
+/* ── 内容区 ──────────────────────────────── */
+.note-content {
+  flex: 1;
+  padding: 10px 14px;
+  outline: none;
+  border: none;
+  resize: none;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #333;
+  overflow-y: auto;
+  -webkit-app-region: no-drag;
+  -webkit-user-select: text;
+  user-select: text;
+  background: transparent;
+}
+
+.note-content:empty::before {
+  content: attr(placeholder);
+  color: rgba(0,0,0,0.3);
+  pointer-events: none;
+}
+
+.note-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.note-content::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.2);
+  border-radius: 2px;
+}
+
+/* ── 底部拖拽手柄 ────────────────────────── */
+.resize-handle {
+  height: 8px;
+  cursor: nwse-resize;
+  background: transparent;
+  -webkit-app-region: no-drag;
+}
+
+/* ── 提醒弹窗 ────────────────────────────── */
+.reminder-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.reminder-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.25);
+}
+
+.reminder-panel {
+  position: relative;
+  background: #fff;
+  border-radius: 10px;
+  padding: 20px;
+  min-width: 280px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+  z-index: 1;
+}
+
+.reminder-panel h3 {
+  font-size: 15px;
+  margin-bottom: 14px;
+  color: #333;
+}
+
+.reminder-panel input[type="datetime-local"] {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  margin-bottom: 16px;
+  outline: none;
+}
+
+.reminder-panel input[type="datetime-local"]:focus {
+  border-color: #3b82f6;
+}
+
+.reminder-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.btn-text {
+  padding: 6px 14px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  color: #666;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.btn-text:hover {
+  background: #f0f0f0;
+}
+
+.btn-primary {
+  padding: 6px 16px;
+  border: none;
+  background: #3b82f6;
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.btn-primary:hover {
+  background: #2563eb;
+}
+
+#reminder-clear {
+  color: #ef4444;
+  margin-right: auto;
+}
