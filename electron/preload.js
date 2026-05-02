@@ -8,7 +8,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setPinned: (id, pinned) => ipcRenderer.invoke('set-pinned', id, pinned),
   setReminder: (id, time) => ipcRenderer.invoke('set-reminder', id, time),
   getNoteData: () => ipcRenderer.invoke('get-note-data'),
+  minimizeNote: (id) => ipcRenderer.invoke('minimize-note', id),
+  hideNote: (id) => ipcRenderer.invoke('hide-note', id),
+  createNote: () => ipcRenderer.invoke('create-note'),
+  unsnapNote: (id) => ipcRenderer.invoke('unsnap-note', id),
   onInitNoteData: (callback) => {
     ipcRenderer.on('init-note-data', (_event, data) => callback(data));
+  },
+  onNoteSnapped: (callback) => {
+    ipcRenderer.on('note-snapped', (_event, data) => callback(data));
   }
 });

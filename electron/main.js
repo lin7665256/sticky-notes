@@ -44,6 +44,24 @@ function setupIPC() {
     }
   });
 
+  ipcMain.handle('minimize-note', (_event, id) => {
+    noteManager.minimizeNoteWindow(id);
+  });
+
+  ipcMain.handle('hide-note', (_event, id) => {
+    noteManager.hideNoteWindow(id);
+  });
+
+  ipcMain.handle('create-note', () => {
+    const noteData = { id: uuidv4() };
+    store.saveNote(noteData);
+    noteManager.createNoteWindow(noteData);
+  });
+
+  ipcMain.handle('unsnap-note', (_event, id) => {
+    noteManager.unsnapNote(id);
+  });
+
   ipcMain.handle('get-note-data', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     const noteId = noteManager.getNoteIdForWindow(win);
@@ -115,6 +133,11 @@ function createTray() {
     store.saveNote(noteData);
     noteManager.createNoteWindow(noteData);
   });
+}
+
+// ── Windows Notification Support ─────────────────────────
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.stickynotes.app');
 }
 
 // ── App Lifecycle ─────────────────────────────────────────

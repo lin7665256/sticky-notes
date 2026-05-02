@@ -10,26 +10,57 @@
   <div class="note-container">
     <!-- 顶部工具栏 -->
     <div class="toolbar">
-      <div class="color-picker">
-        <span class="color-btn active" data-color="#FEF08A" style="background:#FEF08A"></span>
-        <span class="color-btn" data-color="#BFDBFE" style="background:#BFDBFE"></span>
-        <span class="color-btn" data-color="#BBF7D0" style="background:#BBF7D0"></span>
-        <span class="color-btn" data-color="#FECACA" style="background:#FECACA"></span>
-        <span class="color-btn" data-color="#E9D5FF" style="background:#E9D5FF"></span>
-        <span class="color-btn" data-color="#FED7AA" style="background:#FED7AA"></span>
+      <!-- 折叠颜色选择器 -->
+      <div class="color-picker" id="color-picker">
+        <span class="color-current" id="color-current" title="更换颜色">
+          <span class="color-down-arrow">▾</span>
+        </span>
+        <div class="color-popover" id="color-popover">
+          <span class="color-btn" data-color="#FEF08A" style="background:#FEF08A" title="黄色"></span>
+          <span class="color-btn" data-color="#BFDBFE" style="background:#BFDBFE" title="蓝色"></span>
+          <span class="color-btn" data-color="#BBF7D0" style="background:#BBF7D0" title="绿色"></span>
+          <span class="color-btn" data-color="#FECACA" style="background:#FECACA" title="红色"></span>
+          <span class="color-btn" data-color="#E9D5FF" style="background:#E9D5FF" title="紫色"></span>
+          <span class="color-btn" data-color="#FED7AA" style="background:#FED7AA" title="橙色"></span>
+        </div>
       </div>
+
+      <!-- 保存状态指示器 -->
+      <span class="save-status" id="save-status">已保存</span>
+
+      <!-- 操作按钮 -->
       <div class="toolbar-actions">
         <button class="icon-btn" id="btn-pin" title="置顶">📌</button>
         <button class="icon-btn" id="btn-reminder" title="设置提醒">⏰</button>
-        <button class="icon-btn" id="btn-trash" title="删除">🗑️</button>
+        <span class="toolbar-divider"></span>
+        <button class="icon-btn btn-delete" id="btn-trash" title="删除便签">🗑️</button>
+        <span class="toolbar-divider"></span>
+        <button class="icon-btn" id="btn-minimize" title="最小化">
+          <svg width="10" height="2" viewBox="0 0 10 2"><rect width="10" height="2" rx="1" fill="currentColor"/></svg>
+        </button>
+        <button class="icon-btn btn-close-window" id="btn-close" title="关闭（隐藏窗口）">
+          <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 1 L9 9 M9 1 L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
       </div>
+    </div>
+
+    <!-- 格式化工具栏（条件显示） -->
+    <div class="format-toolbar" id="format-toolbar">
+      <button class="fmt-btn" data-cmd="bold" title="加粗"><b>B</b></button>
+      <button class="fmt-btn" data-cmd="italic" title="斜体"><i>I</i></button>
+      <span class="fmt-divider"></span>
+      <button class="fmt-btn" data-cmd="insertUnorderedList" title="无序列表">•≡</button>
     </div>
 
     <!-- 文本编辑区 -->
     <div class="note-content" contenteditable="true" placeholder="在此输入便签内容..."></div>
 
     <!-- 底部拖拽手柄 -->
-    <div class="resize-handle"></div>
+    <div class="resize-handle">
+      <div class="resize-grip">
+        <span></span><span></span><span></span>
+      </div>
+    </div>
   </div>
 
   <!-- 提醒设置弹窗 -->
@@ -37,6 +68,12 @@
     <div class="reminder-backdrop"></div>
     <div class="reminder-panel">
       <h3>设置提醒时间</h3>
+      <div class="reminder-presets">
+        <button class="preset-btn" data-minutes="5">5 分钟</button>
+        <button class="preset-btn" data-minutes="30">30 分钟</button>
+        <button class="preset-btn" data-minutes="60">1 小时</button>
+        <button class="preset-btn" data-minutes="tomorrow">明天</button>
+      </div>
       <input type="datetime-local" id="reminder-input">
       <div class="reminder-actions">
         <button id="reminder-clear" class="btn-text">清除提醒</button>
@@ -44,6 +81,15 @@
         <button id="reminder-cancel" class="btn-text">取消</button>
       </div>
     </div>
+  </div>
+
+  <!-- 右键菜单 -->
+  <div class="context-menu" id="context-menu">
+    <div class="ctx-item" data-action="copy">复制</div>
+    <div class="ctx-item" data-action="paste">粘贴</div>
+    <div class="ctx-item" data-action="selectAll">全选</div>
+    <div class="ctx-divider"></div>
+    <div class="ctx-item" data-action="newNote">新建便签</div>
   </div>
 
   <script src="note.js"></script>

@@ -9,27 +9,42 @@ function schedule(noteId, noteContent, time, onFire) {
   const now = Date.now();
   const delay = targetTime - now;
 
-  if (delay <= 0) return;
+  // If reminder time is past or now, trigger immediately
+  if (delay <= 0) {
+    if (onFire) onFire(noteId);
+    showNotification(noteContent);
+    return;
+  }
 
   const timer = setTimeout(() => {
-    const notification = new Notification({
-      title: '便签提醒',
-      body: noteContent.substring(0, 120) || '您有一条便签提醒',
-      icon: null,
-      silent: false
-    });
-
-    notification.on('click', () => {
-      if (onFire) onFire(noteId);
-    });
-
-    notification.show();
-    timers.delete(noteId);
-
+    // Call onFire when timer fires — triggers exactly once
     if (onFire) onFire(noteId);
+    showNotification(noteContent);
+    timers.delete(noteId);
   }, delay);
 
   timers.set(noteId, timer);
+}
+
+function showNotification(noteContent) {
+  // Strip HTML tags from contenteditable content
+  const text = (noteContent || '').replace(/<[^>]+>/g, '').trim();
+  // Title = first line (up to 30 chars), body = first 120 chars
+  const firstLine = text.split('\n')[0].substring(0, 30) || '便签提醒';
+  const body = text.substring(0, 120) || '您有一条便签提醒';
+
+  const notification = new Notification({
+    title: firstLine,
+    body: body,
+    silent: false
+  });
+
+  notification.on('click', () => {
+    // Clicking the notification just dismisses it (no double trigger)
+    notification.close();
+  });
+
+  notification.show();
 }
 
 function cancel(noteId) {
