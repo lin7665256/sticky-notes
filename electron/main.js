@@ -7,6 +7,12 @@ const { v4: uuidv4 } = require('uuid');
 
 let tray = null;
 
+// Log uncaught exceptions instead of showing error dialogs
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error.message);
+  console.error(error.stack);
+});
+
 // ── IPC Handlers ──────────────────────────────────────────
 function setupIPC() {
   ipcMain.handle('save-note', (_event, noteData) => {
@@ -54,12 +60,23 @@ function setupIPC() {
 
   ipcMain.handle('create-note', () => {
     const noteData = { id: uuidv4() };
-    store.saveNote(noteData);
     noteManager.createNoteWindow(noteData);
   });
 
   ipcMain.handle('unsnap-note', (_event, id) => {
     noteManager.unsnapNote(id);
+  });
+
+  ipcMain.handle('unsnap-in-place', (_event, id) => {
+    noteManager.unsnapInPlace(id, { reposition: true });
+  });
+
+  ipcMain.handle('expand-note', (_event, id) => {
+    noteManager.expandSnappedNote(id);
+  });
+
+  ipcMain.handle('collapse-note', (_event, id) => {
+    noteManager.collapseSnappedNote(id);
   });
 
   ipcMain.handle('get-note-data', (event) => {
@@ -107,7 +124,6 @@ function createTray() {
       label: '新建便签',
       click: () => {
         const noteData = { id: uuidv4() };
-        store.saveNote(noteData);
         noteManager.createNoteWindow(noteData);
       }
     },
@@ -130,7 +146,6 @@ function createTray() {
 
   tray.on('click', () => {
     const noteData = { id: uuidv4() };
-    store.saveNote(noteData);
     noteManager.createNoteWindow(noteData);
   });
 }
@@ -150,7 +165,6 @@ app.whenReady().then(() => {
   const notes = store.getAllNotes();
   if (notes.length === 0) {
     const noteData = { id: uuidv4() };
-    store.saveNote(noteData);
     noteManager.createNoteWindow(noteData);
   }
 });

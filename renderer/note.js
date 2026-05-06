@@ -3,6 +3,10 @@ let noteData = null;
 let saveTimer = null;
 let saveStatusTimer = null;
 let isSnapped = false;
+let isExpanded = false;
+let collapseTimer = null;
+let expandGraceActive = false;
+let autoExpandCooldownUntil = 0;
 
 // ── DOM Elements ───────────────────────────────────────
 const noteContent = document.querySelector('.note-content');
@@ -19,6 +23,7 @@ const reminderInput = document.getElementById('reminder-input');
 const container = document.querySelector('.note-container');
 const saveStatus = document.getElementById('save-status');
 const formatToolbar = document.getElementById('format-toolbar');
+const toolbarEl = document.querySelector('.toolbar');
 const contextMenu = document.getElementById('context-menu');
 
 // ── Initialize ─────────────────────────────────────────
@@ -41,12 +46,45 @@ electronAPI.onInitNoteData((data) => {
 });
 
 // Listen for edge snap state
-electronAPI.onNoteSnapped(({ snapped }) => {
+electronAPI.onNoteSnapped(({ snapped, expanded }) => {
+  const prevExpanded = isExpanded;
   isSnapped = snapped;
-  if (snapped) {
+  isExpanded = expanded || false;
+
+  if (snapped && !isExpanded) {
     container.classList.add('snapped');
+    container.classList.remove('snapped-expanded');
+    container.style['-webkit-app-region'] = 'no-drag';
+    if (toolbarEl) toolbarEl.style['-webkit-app-region'] = 'no-drag';
+
+    // If collapsing from expanded state and mouse is still over the tab
+    // (window resize may leave cursor inside new bounds), re-expand
+    if (prevExpanded && Date.now() > autoExpandCooldownUntil) {
+      requestAnimationFrame(() => {
+        if (container.matches(':hover') && isSnapped && !isExpanded && noteData && noteData.id) {
+          autoExpandCooldownUntil = Date.now() + 500;
+          expandGraceActive = false;
+          clearTimeout(collapseTimer);
+          electronAPI.expandNote(noteData.id);
+        }
+      });
+    }
+  } else if (snapped && isExpanded) {
+    container.classList.add('snapped', 'snapped-expanded');
+    container.style['-webkit-app-region'] = 'no-drag';
+    if (toolbarEl) toolbarEl.style['-webkit-app-region'] = ''; // 展开态：toolbar 恢复 CSS drag 允许拖拽
+
+    // Grace period: ignore mouseleave briefly after expand
+    // (window resize during animation can falsely trigger mouseleave)
+    expandGraceActive = true;
+    clearTimeout(collapseTimer);
+    collapseTimer = setTimeout(() => {
+      expandGraceActive = false;
+    }, 300);
   } else {
-    container.classList.remove('snapped');
+    container.classList.remove('snapped', 'snapped-expanded');
+    container.style['-webkit-app-region'] = '';
+    if (toolbarEl) toolbarEl.style['-webkit-app-region'] = '';
   }
 });
 
@@ -110,7 +148,15 @@ btnMinimize.addEventListener('click', () => {
 
 btnClose.addEventListener('click', () => {
   if (noteData && noteData.id) {
-    electronAPI.hideNote(noteData.id);
+    const hasContent = noteContent.textContent.trim().length > 0;
+    const hasReminder = noteData.reminderAt != null;
+
+    if (!hasContent && !hasReminder) {
+      // Empty note with no reminder → delete entirely
+      electronAPI.deleteNote(noteData.id);
+    } else {
+      electronAPI.hideNote(noteData.id);
+    }
   }
 });
 
@@ -428,15 +474,38 @@ function setupCompactMode() {
   ro.observe(container);
 }
 
-// ── Snap Click to Restore ──────────────────────────────
-container.addEventListener('click', (e) => {
-  // Ignore clicks on interactive elements
+// ── Snap Hover Expand / Collapse ──────────────────────
+container.addEventListener('mouseenter', () => {
+  if (isSnapped && !isExpanded && noteData && noteData.id) {
+    expandGraceActive = false; // reset stale grace flag from previous expand
+    clearTimeout(collapseTimer);
+    electronAPI.expandNote(noteData.id);
+  }
+});
+
+container.addEventListener('mouseleave', () => {
+  if (isSnapped && isExpanded && noteData && noteData.id) {
+    if (expandGraceActive) return; // ignore during post-expand grace period
+    clearTimeout(collapseTimer);
+    collapseTimer = setTimeout(() => {
+      electronAPI.collapseNote(noteData.id);
+    }, 300);
+  }
+});
+
+// ── Snap Mousedown to Unsnap in Place (TAB state) ──────
+// Mousedown on TAB: unsnap to full size at the edge position.
+// After unsnap the toolbar (with -webkit-app-region: drag) is visible
+// for subsequent dragging of the full-size window.
+container.addEventListener('mousedown', (e) => {
+  // Ignore mousedown on interactive elements
   if (e.target.closest('button') || e.target.closest('.color-btn') ||
       e.target.closest('#color-current') || e.target.closest('.ctx-item') ||
       e.target.closest('.reminder-panel') || e.target.closest('.color-popover')) {
     return;
   }
-  if (isSnapped && noteData && noteData.id) {
-    electronAPI.unsnapNote(noteData.id);
+  // Only unsnap from collapsed tab state (not expanded preview)
+  if (isSnapped && !isExpanded && noteData && noteData.id) {
+    electronAPI.unsnapInPlace(noteData.id);
   }
 });

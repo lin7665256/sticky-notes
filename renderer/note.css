@@ -231,8 +231,29 @@ html, body {
 .note-container.snapped .format-toolbar {
   display: none;
 }
+.note-container.snapped .toolbar {
+  -webkit-app-region: no-drag;
+}
 .note-container.snapped {
   box-shadow: inset 0 0 0 1px rgba(0,0,0,0.15);
+  -webkit-app-region: no-drag;
+}
+
+/* ── Snapped Expanded (Drawer hover preview) ───── */
+.note-container.snapped.snapped-expanded .toolbar,
+.note-container.snapped.snapped-expanded .note-content,
+.note-container.snapped.snapped-expanded .resize-handle {
+  display: flex;
+}
+.note-container.snapped.snapped-expanded .toolbar {
+  -webkit-app-region: drag; /* toolbar must be draggable in expanded preview */
+}
+.note-container.snapped.snapped-expanded .format-toolbar.visible {
+  display: flex;
+}
+.note-container.snapped.snapped-expanded {
+  box-shadow: var(--shadow-note);
+  -webkit-app-region: no-drag; /* restore content interaction in preview */
 }
 
 /* ── Format Toolbar ──────────────────────────────── */
