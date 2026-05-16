@@ -22,6 +22,98 @@ const drawerGroups = new Map(); // groupKey → { ids, hoveredId, workArea }
 const TAB_HEIGHT = 36;
 const TAB_GAP = 2;
 
+// ── Hover polling (main-process cursor detection) ────
+const hoverIntervals = new Map(); // noteId → intervalId
+
+function startHoverPolling(id) {
+  stopHoverPolling(id);
+  const win = windows.get(id);
+  if (!win) return;
+
+  const check = () => {
+    const state = snapStates.get(id);
+    const w = windows.get(id);
+    if (!state || !state.snapped || state.expanded || !w || w.isDestroyed()) return;
+
+    const cursor = screen.getCursorScreenPoint();
+    const bounds = w.getBounds();
+    if (cursor.x >= bounds.x && cursor.x < bounds.x + bounds.width &&
+        cursor.y >= bounds.y && cursor.y < bounds.y + bounds.height) {
+      expandSnappedNote(id);
+    }
+  };
+
+  const id2 = setInterval(check, 120);
+  hoverIntervals.set(id, id2);
+}
+
+function stopHoverPolling(id) {
+  const existing = hoverIntervals.get(id);
+  if (existing) {
+    clearInterval(existing);
+    hoverIntervals.delete(id);
+  }
+}
+
+// ── Custom resize (resizable:false → Aero Snap fully disarmed) ─
+const resizeStates = new Map(); // noteId → { intervalId, startCursor, startBounds }
+
+function startResizeNote(id) {
+  const win = windows.get(id);
+  const state = snapStates.get(id);
+
+  // Don't allow resize when snapped to edge
+  if (!win || win.isDestroyed() || (state && state.snapped)) return;
+
+  // Stop any existing resize for this window
+  stopResizeNote(id);
+
+  const cursor = screen.getCursorScreenPoint();
+  const bounds = win.getBounds();
+  resizeStates.set(id, {
+    intervalId: null,
+    startCursor: { x: cursor.x, y: cursor.y },
+    startBounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
+  });
+
+  const entry = resizeStates.get(id);
+  entry.intervalId = setInterval(() => {
+    const w = windows.get(id);
+    if (!w || w.isDestroyed()) {
+      stopResizeNote(id);
+      return;
+    }
+    const cur = screen.getCursorScreenPoint();
+    const dx = cur.x - entry.startCursor.x;
+    const dy = cur.y - entry.startCursor.y;
+
+    const newWidth = Math.max(200, entry.startBounds.width + dx);
+    const newHeight = Math.max(100, entry.startBounds.height + dy);
+
+    w.setBounds({
+      x: entry.startBounds.x,
+      y: entry.startBounds.y,
+      width: newWidth,
+      height: newHeight
+    });
+  }, 16);
+}
+
+function stopResizeNote(id) {
+  const entry = resizeStates.get(id);
+  if (!entry) return;
+  if (entry.intervalId) clearInterval(entry.intervalId);
+  resizeStates.delete(id);
+
+  // Persist final bounds
+  const win = windows.get(id);
+  if (win && !win.isDestroyed()) {
+    const [x, y] = win.getPosition();
+    const [w, h] = win.getSize();
+    store.saveNote({ id, x, y, width: w, height: h });
+  }
+}
+
 function createNoteWindow(noteData) {
   const data = { ...NOTE_DEFAULTS, ...noteData };
 
@@ -45,7 +137,7 @@ function createNoteWindow(noteData) {
     frame: false,
     transparent: false,
     alwaysOnTop: data.pinned,
-    resizable: true,
+    resizable: false, // disable OS-level resize → Aero Snap fully disarmed
     skipTaskbar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -96,10 +188,8 @@ function createNoteWindow(noteData) {
       const detachedThreshold = SNAP_THRESHOLD + 30;
 
       if (snap.edge === 'left' && nx > wa.x + detachedThreshold) {
-        snap.dragUnsnapUntil = Date.now() + 1500;
         unsnapInPlace(data.id);
       } else if (snap.edge === 'right' && nx + nw < wa.x + wa.width - detachedThreshold) {
-        snap.dragUnsnapUntil = Date.now() + 1500;
         unsnapInPlace(data.id);
       }
     }, 80);
@@ -116,29 +206,12 @@ function createNoteWindow(noteData) {
     }, 300);
   });
 
-  // Prevent Windows Aero Snap and block resize when snapped
-  win.on('will-resize', (event, newBounds) => {
-    const snap = snapStates.get(data.id);
-    if (snap && snap.snapped) {
-      event.preventDefault();
-      return;
-    }
-    const current = win.getBounds();
-    const display = screen.getDisplayNearestPoint({ x: current.x, y: current.y });
-    const { width: sw, height: sh } = display.workArea;
-    if (newBounds.width === Math.round(sw / 2) ||
-        newBounds.width === Math.round(sw / 4)) {
-      event.preventDefault();
-      return;
-    }
-    if (newBounds.height === sh && current.height !== sh) {
-      event.preventDefault();
-      return;
-    }
-  });
-
   win.on('closed', () => {
+    stopHoverPolling(data.id);
     const state = snapStates.get(data.id);
+    if (state) {
+      clearTimeout(state._coolingRetryTimer);
+    }
     if (state && state.snapped) {
       const groupKey = `${state.edge}-${state.displayId}`;
       const group = drawerGroups.get(groupKey);
@@ -243,9 +316,9 @@ function getNoteIdForWindow(win) {
 
 // ── Edge Snap ────────────────────────────────────────
 function checkEdgeSnap(win, id, x, y, width) {
+  // Cooling period: don't re-snap immediately after unsnap
   const state = snapStates.get(id);
-  // Cooldown: skip check after user drags away from edge (prevents flicker)
-  if (state && state.dragUnsnapUntil > Date.now()) return;
+  if (state && state.dragUnsnapUntil && state.dragUnsnapUntil > Date.now()) return;
 
   const display = screen.getDisplayNearestPoint({ x, y });
   const workArea = display.workArea;
@@ -273,6 +346,11 @@ function doSnap(win, id, edge, y, workArea, displayId) {
     expandedBounds: null,
     displayId
   };
+  // Clear any pending cooling-retry timer from a previous snap cycle
+  const oldState = snapStates.get(id);
+  if (oldState && oldState._coolingRetryTimer) {
+    clearTimeout(oldState._coolingRetryTimer);
+  }
   snapStates.set(id, state);
 
   const groupKey = `${edge}-${displayId}`;
@@ -298,6 +376,9 @@ function doSnap(win, id, edge, y, workArea, displayId) {
   // Animate to tab position
   animateBounds(win, state.tabBounds, 60);
   win.webContents.send('note-snapped', { snapped: true, expanded: false, edge });
+
+  // Start polling for hover-to-expand (renderer mouseenter blocked by drag region)
+  startHoverPolling(id);
 }
 
 function unsnapNote(id) {
@@ -320,6 +401,7 @@ function unsnapNote(id) {
 
   state.snapped = false;
   state.expanded = false;
+  stopHoverPolling(id);
 
   const { originalBounds, edge } = state;
   const display = screen.getDisplayNearestPoint({ x: originalBounds.x, y: originalBounds.y });
@@ -364,10 +446,38 @@ function unsnapInPlace(id, { reposition = false } = {}) {
 
   state.snapped = false;
   state.expanded = false;
+  stopHoverPolling(id);
+
+  // Set cooling period to prevent immediate re-snap
+  state.dragUnsnapUntil = Date.now() + 1500;
+
+  // Schedule re-check after cooling expires.
+  // If user dropped the window at an edge during cooling, no further move events
+  // will fire — this timer ensures the edge is re-evaluated.
+  clearTimeout(state._coolingRetryTimer);
+  state._coolingRetryTimer = setTimeout(() => {
+    const w = windows.get(id);
+    const st = snapStates.get(id);
+    if (!w || w.isDestroyed() || !st || st.snapped || (st.dragUnsnapUntil && st.dragUnsnapUntil > Date.now())) return;
+    const [nx, ny] = w.getPosition();
+    const [nw] = w.getSize();
+    checkEdgeSnap(w, id, nx, ny, nw);
+  }, 1600); // slightly after dragUnsnapUntil
 
   if (reposition && state.expandedBounds) {
     // Mousedown on TAB: instantly restore to full size at visible edge position
     win.setBounds(state.expandedBounds);
+  } else if (state.originalBounds) {
+    // Dragged away from edge: restore full size at current dragged position
+    const [cx, cy] = win.getPosition();
+    const origH = state.originalBounds.height;
+    const origW = state.originalBounds.width;
+    const display = screen.getDisplayNearestPoint({ x: cx, y: cy });
+    const wa = display.workArea;
+    let newY = cy; // keep top edge aligned (tab y = expanded y)
+    // Clamp to work area
+    newY = Math.max(wa.y, Math.min(newY, wa.y + wa.height - origH));
+    win.setBounds({ x: cx, y: newY, width: origW, height: origH });
   }
   win.webContents.send('note-snapped', { snapped: false });
 }
@@ -381,7 +491,7 @@ function expandSnappedNote(id) {
   // Skip expansion if window is being dragged away from tab position
   const [cx, cy] = win.getPosition();
   const tb = state.tabBounds;
-  if (tb && (Math.abs(cx - tb.x) > 8 || Math.abs(cy - tb.y) > 8)) return;
+  if (tb && (Math.abs(cx - tb.x) > 4 || Math.abs(cy - tb.y) > 4)) return;
 
   const groupKey = `${state.edge}-${state.displayId}`;
   const group = drawerGroups.get(groupKey);
@@ -404,10 +514,17 @@ function collapseSnappedNote(id, skipAnimate = false) {
   const win = windows.get(id);
   if (!state || !state.snapped || !state.expanded || !win || win.isDestroyed()) return;
 
-  // Skip collapse if window is being actively dragged away from tab position
-  const [cx, cy] = win.getPosition();
-  const tb = state.tabBounds;
-  if (tb && (Math.abs(cx - tb.x) > 8 || Math.abs(cy - tb.y) > 8)) return;
+  // Guard: if cursor is still inside the window, don't collapse.
+  // This prevents spurious mouseleave (e.g. from toolbar drag region)
+  // from collapsing the note while the user is still hovering over it.
+  if (!skipAnimate) {
+    const cursor = screen.getCursorScreenPoint();
+    const bounds = win.getBounds();
+    if (cursor.x >= bounds.x && cursor.x < bounds.x + bounds.width &&
+        cursor.y >= bounds.y && cursor.y < bounds.y + bounds.height) {
+      return; // cursor still inside — ignore spurious collapse request
+    }
+  }
 
   const groupKey = `${state.edge}-${state.displayId}`;
   const group = drawerGroups.get(groupKey);
@@ -539,6 +656,8 @@ module.exports = {
   unsnapInPlace,
   expandSnappedNote,
   collapseSnappedNote,
+  startResizeNote,
+  stopResizeNote,
   setPinned,
   restoreWindows,
   focusNote,

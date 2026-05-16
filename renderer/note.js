@@ -23,7 +23,6 @@ const reminderInput = document.getElementById('reminder-input');
 const container = document.querySelector('.note-container');
 const saveStatus = document.getElementById('save-status');
 const formatToolbar = document.getElementById('format-toolbar');
-const toolbarEl = document.querySelector('.toolbar');
 const contextMenu = document.getElementById('context-menu');
 
 // ── Initialize ─────────────────────────────────────────
@@ -46,7 +45,7 @@ electronAPI.onInitNoteData((data) => {
 });
 
 // Listen for edge snap state
-electronAPI.onNoteSnapped(({ snapped, expanded }) => {
+electronAPI.onNoteSnapped(({ snapped, expanded, edge }) => {
   const prevExpanded = isExpanded;
   isSnapped = snapped;
   isExpanded = expanded || false;
@@ -54,8 +53,6 @@ electronAPI.onNoteSnapped(({ snapped, expanded }) => {
   if (snapped && !isExpanded) {
     container.classList.add('snapped');
     container.classList.remove('snapped-expanded');
-    container.style['-webkit-app-region'] = 'no-drag';
-    if (toolbarEl) toolbarEl.style['-webkit-app-region'] = 'no-drag';
 
     // If collapsing from expanded state and mouse is still over the tab
     // (window resize may leave cursor inside new bounds), re-expand
@@ -63,17 +60,15 @@ electronAPI.onNoteSnapped(({ snapped, expanded }) => {
       requestAnimationFrame(() => {
         if (container.matches(':hover') && isSnapped && !isExpanded && noteData && noteData.id) {
           autoExpandCooldownUntil = Date.now() + 500;
-          expandGraceActive = false;
+          expandGraceActive = true;
           clearTimeout(collapseTimer);
+          collapseTimer = setTimeout(() => { expandGraceActive = false; }, 400);
           electronAPI.expandNote(noteData.id);
         }
       });
     }
   } else if (snapped && isExpanded) {
     container.classList.add('snapped', 'snapped-expanded');
-    container.style['-webkit-app-region'] = 'no-drag';
-    if (toolbarEl) toolbarEl.style['-webkit-app-region'] = ''; // 展开态：toolbar 恢复 CSS drag 允许拖拽
-
     // Grace period: ignore mouseleave briefly after expand
     // (window resize during animation can falsely trigger mouseleave)
     expandGraceActive = true;
@@ -83,8 +78,6 @@ electronAPI.onNoteSnapped(({ snapped, expanded }) => {
     }, 300);
   } else {
     container.classList.remove('snapped', 'snapped-expanded');
-    container.style['-webkit-app-region'] = '';
-    if (toolbarEl) toolbarEl.style['-webkit-app-region'] = '';
   }
 });
 
@@ -148,11 +141,11 @@ btnMinimize.addEventListener('click', () => {
 
 btnClose.addEventListener('click', () => {
   if (noteData && noteData.id) {
+    clearTimeout(saveTimer);
     const hasContent = noteContent.textContent.trim().length > 0;
     const hasReminder = noteData.reminderAt != null;
 
     if (!hasContent && !hasReminder) {
-      // Empty note with no reminder → delete entirely
       electronAPI.deleteNote(noteData.id);
     } else {
       electronAPI.hideNote(noteData.id);
@@ -475,11 +468,14 @@ function setupCompactMode() {
 }
 
 // ── Snap Hover Expand / Collapse ──────────────────────
+// Hover-to-expand is handled by main process cursor polling
+// (renderer mouseenter blocked by -webkit-app-region: drag on container).
+// Collapse is driven by renderer mouseleave (container is no-drag in expanded state).
+// mouseenter cancels any pending collapse when cursor re-enters the expanded note
+// (handles toolbar drag region causing spurious mouseleave).
 container.addEventListener('mouseenter', () => {
-  if (isSnapped && !isExpanded && noteData && noteData.id) {
-    expandGraceActive = false; // reset stale grace flag from previous expand
+  if (isSnapped && isExpanded && noteData && noteData.id) {
     clearTimeout(collapseTimer);
-    electronAPI.expandNote(noteData.id);
   }
 });
 
@@ -507,5 +503,33 @@ container.addEventListener('mousedown', (e) => {
   // Only unsnap from collapsed tab state (not expanded preview)
   if (isSnapped && !isExpanded && noteData && noteData.id) {
     electronAPI.unsnapInPlace(noteData.id);
+  }
+});
+
+// ── Custom Resize (resizable:false → Aero Snap fully disarmed) ──
+const resizeHandle = document.querySelector('.resize-handle');
+let isResizing = false;
+let resizePointerId = null;
+
+resizeHandle.addEventListener('mousedown', (e) => {
+  // Don't resize when snapped to edge
+  if (isSnapped || !noteData || !noteData.id) return;
+
+  e.preventDefault();
+  resizePointerId = e.pointerId;
+  resizeHandle.setPointerCapture(e.pointerId);
+  isResizing = true;
+  electronAPI.startResizeNote(noteData.id);
+});
+
+document.addEventListener('mouseup', () => {
+  if (!isResizing) return;
+  isResizing = false;
+  if (resizePointerId != null) {
+    try { resizeHandle.releasePointerCapture(resizePointerId); } catch (_) { /* ignore */ }
+    resizePointerId = null;
+  }
+  if (noteData && noteData.id) {
+    electronAPI.stopResizeNote(noteData.id);
   }
 });

@@ -7,6 +7,24 @@ const store = new Store({
   }
 });
 
+const WRITE_MAX_RETRIES = 3;
+const WRITE_RETRY_DELAY = 80;
+
+function setWithRetry(key, value) {
+  for (let attempt = 1; attempt <= WRITE_MAX_RETRIES; attempt++) {
+    try {
+      store.set(key, value);
+      return;
+    } catch (err) {
+      if (attempt === WRITE_MAX_RETRIES) throw err;
+      if (err.code !== 'ENOSPC' && err.code !== 'EPERM' && err.code !== 'EBUSY') throw err;
+      console.warn(`store.set retry ${attempt}/${WRITE_MAX_RETRIES} after ${err.code}`);
+      const start = Date.now();
+      while (Date.now() - start < WRITE_RETRY_DELAY) { /* spin */ }
+    }
+  }
+}
+
 function getAllNotes() {
   return store.get('notes', []);
 }
@@ -30,13 +48,13 @@ function saveNote(noteData) {
     });
   }
 
-  store.set('notes', notes);
+  setWithRetry('notes', notes);
   return notes[index >= 0 ? index : notes.length - 1];
 }
 
 function deleteNote(id) {
   const notes = getAllNotes().filter(n => n.id !== id);
-  store.set('notes', notes);
+  setWithRetry('notes', notes);
 }
 
 module.exports = {

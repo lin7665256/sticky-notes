@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   unsnapInPlace: (id) => ipcRenderer.invoke('unsnap-in-place', id),
   expandNote: (id) => ipcRenderer.invoke('expand-note', id),
   collapseNote: (id) => ipcRenderer.invoke('collapse-note', id),
+  startResizeNote: (id) => ipcRenderer.invoke('start-resize-note', id),
+  stopResizeNote: (id) => ipcRenderer.invoke('stop-resize-note', id),
   onInitNoteData: (callback) => {
     ipcRenderer.on('init-note-data', (_event, data) => callback(data));
   },

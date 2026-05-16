@@ -20,7 +20,11 @@ function setupIPC() {
   });
 
   ipcMain.handle('delete-note', (_event, id) => {
-    store.deleteNote(id);
+    try {
+      store.deleteNote(id);
+    } catch (err) {
+      console.error('deleteNote failed after retries:', err.message);
+    }
     noteManager.closeNoteWindow(id);
   });
 
@@ -77,6 +81,14 @@ function setupIPC() {
 
   ipcMain.handle('collapse-note', (_event, id) => {
     noteManager.collapseSnappedNote(id);
+  });
+
+  ipcMain.handle('start-resize-note', (_event, id) => {
+    noteManager.startResizeNote(id);
+  });
+
+  ipcMain.handle('stop-resize-note', (_event, id) => {
+    noteManager.stopResizeNote(id);
   });
 
   ipcMain.handle('get-note-data', (event) => {
