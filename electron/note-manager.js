@@ -24,22 +24,40 @@ const TAB_GAP = 2;
 
 // ── Hover polling (main-process cursor detection) ────
 const hoverIntervals = new Map(); // noteId → intervalId
+const collapseOutsideCounts = new Map(); // noteId → consecutive outside count
 
 function startHoverPolling(id) {
   stopHoverPolling(id);
   const win = windows.get(id);
   if (!win) return;
 
+  collapseOutsideCounts.set(id, 0);
+
   const check = () => {
     const state = snapStates.get(id);
     const w = windows.get(id);
-    if (!state || !state.snapped || state.expanded || !w || w.isDestroyed()) return;
+    if (!state || !state.snapped || !w || w.isDestroyed()) return;
 
     const cursor = screen.getCursorScreenPoint();
     const bounds = w.getBounds();
-    if (cursor.x >= bounds.x && cursor.x < bounds.x + bounds.width &&
-        cursor.y >= bounds.y && cursor.y < bounds.y + bounds.height) {
+    const isInside = cursor.x >= bounds.x && cursor.x < bounds.x + bounds.width &&
+                     cursor.y >= bounds.y && cursor.y < bounds.y + bounds.height;
+
+    if (!state.expanded && isInside) {
+      // Cursor entered collapsed TAB → expand
       expandSnappedNote(id);
+    } else if (state.expanded && !isInside) {
+      // Cursor left expanded note: count consecutive outside polls as fallback
+      // for cases where renderer mouseleave is blocked by toolbar drag region
+      const count = (collapseOutsideCounts.get(id) || 0) + 1;
+      collapseOutsideCounts.set(id, count);
+      if (count >= 2) {
+        collapseOutsideCounts.set(id, 0);
+        collapseSnappedNote(id);
+      }
+    } else {
+      // Cursor is inside expanded note (or inside collapsed TAB handled above)
+      collapseOutsideCounts.set(id, 0);
     }
   };
 
@@ -53,6 +71,7 @@ function stopHoverPolling(id) {
     clearInterval(existing);
     hoverIntervals.delete(id);
   }
+  collapseOutsideCounts.delete(id);
 }
 
 // ── Custom resize (resizable:false → Aero Snap fully disarmed) ─
@@ -374,8 +393,11 @@ function doSnap(win, id, edge, y, workArea, displayId) {
   recalculateDrawer(groupKey);
 
   // Animate to tab position
-  animateBounds(win, state.tabBounds, 60);
+  animateBounds(win, state.tabBounds, 150);
   win.webContents.send('note-snapped', { snapped: true, expanded: false, edge });
+
+  // Auto-pin when entering collapsed TAB state
+  if (!win.isDestroyed()) win.setAlwaysOnTop(true);
 
   // Start polling for hover-to-expand (renderer mouseenter blocked by drag region)
   startHoverPolling(id);
@@ -402,6 +424,12 @@ function unsnapNote(id) {
   state.snapped = false;
   state.expanded = false;
   stopHoverPolling(id);
+
+  // Restore user's pinned preference when exiting snapped state
+  const note = store.getNote(id);
+  if (note && !win.isDestroyed()) {
+    win.setAlwaysOnTop(!!note.pinned);
+  }
 
   const { originalBounds, edge } = state;
   const display = screen.getDisplayNearestPoint({ x: originalBounds.x, y: originalBounds.y });
@@ -447,6 +475,14 @@ function unsnapInPlace(id, { reposition = false } = {}) {
   state.snapped = false;
   state.expanded = false;
   stopHoverPolling(id);
+
+  // Restore user's pinned preference when exiting snapped state
+  {
+    const note = store.getNote(id);
+    if (note && !win.isDestroyed()) {
+      win.setAlwaysOnTop(!!note.pinned);
+    }
+  }
 
   // Set cooling period to prevent immediate re-snap
   state.dragUnsnapUntil = Date.now() + 1500;
@@ -504,7 +540,12 @@ function expandSnappedNote(id) {
 
   group.hoveredId = id;
   state.expanded = true;
-  animateBounds(win, state.expandedBounds, 80);
+  collapseOutsideCounts.set(id, 0); // reset collapse guard on expand
+  animateBounds(win, state.expandedBounds, 200);
+
+  // Ensure expanded note stays on top for easy interaction
+  if (!win.isDestroyed()) win.setAlwaysOnTop(true);
+
   win.webContents.send('note-snapped', { snapped: true, expanded: true, edge: state.edge });
   win.focus();
 }
@@ -536,8 +577,10 @@ function collapseSnappedNote(id, skipAnimate = false) {
   if (skipAnimate) {
     if (!win.isDestroyed()) win.setBounds(state.tabBounds);
   } else {
-    animateBounds(win, state.tabBounds, 80);
+    animateBounds(win, state.tabBounds, 200);
   }
+  // Auto-pin when collapsed to TAB
+  if (!win.isDestroyed()) win.setAlwaysOnTop(true);
   if (!win.isDestroyed()) {
     win.webContents.send('note-snapped', { snapped: true, expanded: false, edge: state.edge });
   }
@@ -603,13 +646,13 @@ function recalculateDrawer(groupKey) {
 
     // Animate non-expanded windows to tab position
     if (group.hoveredId !== id) {
-      animateBounds(win, state.tabBounds, 60);
+      animateBounds(win, state.tabBounds, 120);
     }
   }
 }
 
-// ── Smooth sliding animation (Windows compatible) ────
-function animateBounds(win, target, duration = 60) {
+// ── Smooth sliding animation with easing ──────────────
+function animateBounds(win, target, duration = 150) {
   if (win.isDestroyed()) return;
 
   const start = win.getBounds();
@@ -618,33 +661,40 @@ function animateBounds(win, target, duration = 60) {
   const dw = target.width - start.width;
   const dh = target.height - start.height;
 
-  if (Math.abs(dx) < 3 && Math.abs(dy) < 3 && Math.abs(dw) < 3 && Math.abs(dh) < 3) {
+  // Skip if change is negligible
+  if (Math.abs(dx) < 2 && Math.abs(dy) < 2 && Math.abs(dw) < 2 && Math.abs(dh) < 2) {
     win.setBounds(target);
     return;
   }
 
-  const steps = 10;
-  const interval = Math.floor(duration / steps);
-  let step = 0;
+  const startTime = Date.now();
+  const FRAME_MS = 16; // ~60fps, aligned with display refresh
 
   const timer = setInterval(() => {
     if (win.isDestroyed()) {
       clearInterval(timer);
       return;
     }
-    step++;
-    if (step >= steps) {
+
+    const elapsed = Date.now() - startTime;
+    if (elapsed >= duration) {
       win.setBounds(target);
       clearInterval(timer);
       return;
     }
+
+    // easeOutCubic: swift start, smooth deceleration, minimal tail
+    // avoids the long creep of easeInOut at the end
+    const t = elapsed / duration;
+    const eased = 1 - Math.pow(1 - t, 3);
+
     win.setBounds({
-      x: Math.round(start.x + dx * step / steps),
-      y: Math.round(start.y + dy * step / steps),
-      width: Math.round(start.width + dw * step / steps),
-      height: Math.round(start.height + dh * step / steps)
+      x: Math.round(start.x + dx * eased),
+      y: Math.round(start.y + dy * eased),
+      width: Math.round(start.width + dw * eased),
+      height: Math.round(start.height + dh * eased)
     });
-  }, interval);
+  }, FRAME_MS);
 }
 
 module.exports = {

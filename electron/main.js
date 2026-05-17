@@ -91,6 +91,10 @@ function setupIPC() {
     noteManager.stopResizeNote(id);
   });
 
+  ipcMain.handle('focus-note', (_event, id) => {
+    noteManager.focusNote(id);
+  });
+
   ipcMain.handle('get-note-data', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     const noteId = noteManager.getNoteIdForWindow(win);

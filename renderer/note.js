@@ -60,9 +60,8 @@ electronAPI.onNoteSnapped(({ snapped, expanded, edge }) => {
       requestAnimationFrame(() => {
         if (container.matches(':hover') && isSnapped && !isExpanded && noteData && noteData.id) {
           autoExpandCooldownUntil = Date.now() + 500;
-          expandGraceActive = true;
-          clearTimeout(collapseTimer);
-          collapseTimer = setTimeout(() => { expandGraceActive = false; }, 400);
+          // expandGraceActive and collapseTimer are set by the note-snapped
+          // handler when it receives expanded:true — no need to set here
           electronAPI.expandNote(noteData.id);
         }
       });
@@ -75,7 +74,7 @@ electronAPI.onNoteSnapped(({ snapped, expanded, edge }) => {
     clearTimeout(collapseTimer);
     collapseTimer = setTimeout(() => {
       expandGraceActive = false;
-    }, 300);
+    }, 80);
   } else {
     container.classList.remove('snapped', 'snapped-expanded');
   }
@@ -485,7 +484,7 @@ container.addEventListener('mouseleave', () => {
     clearTimeout(collapseTimer);
     collapseTimer = setTimeout(() => {
       electronAPI.collapseNote(noteData.id);
-    }, 300);
+    }, 150);
   }
 });
 
@@ -494,6 +493,11 @@ container.addEventListener('mouseleave', () => {
 // After unsnap the toolbar (with -webkit-app-region: drag) is visible
 // for subsequent dragging of the full-size window.
 container.addEventListener('mousedown', (e) => {
+  // Bring note to front on any click
+  if (noteData && noteData.id) {
+    electronAPI.focusNote(noteData.id);
+  }
+
   // Ignore mousedown on interactive elements
   if (e.target.closest('button') || e.target.closest('.color-btn') ||
       e.target.closest('#color-current') || e.target.closest('.ctx-item') ||
