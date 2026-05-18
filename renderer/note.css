@@ -225,18 +225,26 @@ html, body {
 }
 
 /* ── Snapped State (Edge Auto-Hide) ────────────── */
+/* toolbar — display control (required by -webkit-app-region constraints) */
 .note-container.snapped .toolbar,
-.note-container.snapped .note-content,
-.note-container.snapped .resize-handle,
 .note-container.snapped .format-toolbar {
   display: none;
 }
 .note-container.snapped .toolbar {
   -webkit-app-region: no-drag; /* kill ghost drag region from hidden toolbar */
 }
+
+/* content — opacity control (allows smooth fade transition) */
+.note-container.snapped .note-content,
+.note-container.snapped .resize-handle {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease; /* fade-out when leaving expanded state */
+}
+
 .note-container.snapped {
   box-shadow: inset 0 0 0 1px rgba(0,0,0,0.15);
-  -webkit-app-region: drag; /* collaped TAB is draggable */
+  -webkit-app-region: drag; /* collapsed TAB is draggable */
 }
 
 /* Drag handle — kept hidden, not used */
@@ -245,20 +253,34 @@ html, body {
 }
 
 /* ── Snapped Expanded (Drawer hover preview) ───── */
-.note-container.snapped.snapped-expanded .toolbar,
-.note-container.snapped.snapped-expanded .note-content,
-.note-container.snapped.snapped-expanded .resize-handle {
-  display: flex;
-}
+/* toolbar — display flex for drag functionality */
 .note-container.snapped.snapped-expanded .toolbar {
+  display: flex;
   -webkit-app-region: drag; /* toolbar is draggable to pull preview away from edge */
 }
 .note-container.snapped.snapped-expanded .format-toolbar.visible {
   display: flex;
 }
+
+/* content — fade in with delay to align with window expansion progress */
+.note-container.snapped.snapped-expanded .note-content,
+.note-container.snapped.snapped-expanded .resize-handle {
+  opacity: 1;
+  pointer-events: auto;
+  transition: opacity 0.15s ease 0.08s; /* 80ms delay → content visible after window ~87% expanded */
+}
+
 .note-container.snapped.snapped-expanded {
   box-shadow: var(--shadow-note);
   -webkit-app-region: no-drag; /* container content stays interactive in preview */
+}
+
+/* collapsing state — renderer-initiated fast fade-out before IPC */
+.note-container.snapped.snapped-expanded.is-collapsing .note-content,
+.note-container.snapped.snapped-expanded.is-collapsing .resize-handle {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease; /* quick 100ms fade-out */
 }
 
 /* ── Format Toolbar ──────────────────────────────── */

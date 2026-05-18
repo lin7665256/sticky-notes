@@ -161,8 +161,7 @@ function createTray() {
   tray.setContextMenu(contextMenu);
 
   tray.on('click', () => {
-    const noteData = { id: uuidv4() };
-    noteManager.createNoteWindow(noteData);
+    noteManager.showAllWindows();
   });
 }
 

@@ -8,7 +8,7 @@ const NOTE_DEFAULTS = {
   width: 400,
   height: 160,
   color: '#FEF08A',
-  pinned: false
+  pinned: true
 };
 
 // ── Edge Snap ────────────────────────────────────────
@@ -25,6 +25,7 @@ const TAB_GAP = 2;
 // ── Hover polling (main-process cursor detection) ────
 const hoverIntervals = new Map(); // noteId → intervalId
 const collapseOutsideCounts = new Map(); // noteId → consecutive outside count
+const animationTimers = new Map(); // noteId → intervalId (prevent concurrent animations)
 
 function startHoverPolling(id) {
   stopHoverPolling(id);
@@ -61,7 +62,7 @@ function startHoverPolling(id) {
     }
   };
 
-  const id2 = setInterval(check, 120);
+  const id2 = setInterval(check, 80);
   hoverIntervals.set(id, id2);
 }
 
@@ -136,17 +137,25 @@ function stopResizeNote(id) {
 function createNoteWindow(noteData) {
   const data = { ...NOTE_DEFAULTS, ...noteData };
 
-  // Ensure window position is within screen bounds
-  const displays = screen.getAllDisplays();
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const bounds = primaryDisplay.workArea;
+  // Ensure window position is within screen bounds.
+  // For previously-snapped notes, use the stored snap position directly
+  // (skip centering logic) to avoid a visual flash before did-finish-load.
+  let x, y;
+  if (data.snapped && data.snapOriginalBounds) {
+    x = data.snapOriginalBounds.x;
+    y = data.snapOriginalBounds.y;
+  } else {
+    const displays = screen.getAllDisplays();
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const bounds = primaryDisplay.workArea;
 
-  let x = data.x != null ? data.x : Math.floor(bounds.x + bounds.width / 2 - data.width / 2);
-  let y = data.y != null ? data.y : Math.floor(bounds.y + bounds.height / 2 - data.height / 2);
+    x = data.x != null ? data.x : Math.floor(bounds.x + bounds.width / 2 - data.width / 2);
+    y = data.y != null ? data.y : Math.floor(bounds.y + bounds.height / 2 - data.height / 2);
 
-  // Clamp to visible area
-  x = Math.max(bounds.x, Math.min(x, bounds.x + bounds.width - 100));
-  y = Math.max(bounds.y, Math.min(y, bounds.y + bounds.height - 100));
+    // Clamp to visible area
+    x = Math.max(bounds.x, Math.min(x, bounds.x + bounds.width - 100));
+    y = Math.max(bounds.y, Math.min(y, bounds.y + bounds.height - 100));
+  }
 
   const win = new BrowserWindow({
     width: data.width,
@@ -169,7 +178,19 @@ function createNoteWindow(noteData) {
 
   // Pass note data to renderer
   win.webContents.on('did-finish-load', () => {
-    win.webContents.send('init-note-data', data);
+    // Strip snap fields from renderer data to prevent autoSave from
+    // re-persisting stale snap state after unsnap
+    const rendererData = { ...data };
+    delete rendererData.snapped;
+    delete rendererData.snapEdge;
+    delete rendererData.snapOriginalBounds;
+    delete rendererData.snapDisplayId;
+    win.webContents.send('init-note-data', rendererData);
+
+    // If this note was snapped before shutdown, restore the snap state
+    if (data.snapped && data.snapEdge && data.snapOriginalBounds) {
+      restoreSnapNote(data);
+    }
   });
 
   // Save window bounds on move/resize + edge snap detection
@@ -190,6 +211,10 @@ function createNoteWindow(noteData) {
     // Edge snap check — shorter debounce for faster response
     clearTimeout(snapTimer);
     snapTimer = setTimeout(() => {
+      // Skip edge snap checks while minimized — Win+D / Show Desktop
+      // may report offscreen coordinates that falsely trigger unsnap
+      if (win.isMinimized()) return;
+
       const snap = snapStates.get(data.id);
       if (!snap || !snap.snapped) {
         // Not snapped — check if should snap to edge
@@ -225,8 +250,74 @@ function createNoteWindow(noteData) {
     }, 300);
   });
 
+  // ── Auto-restore from system minimize (Win+D / Show Desktop) ──
+  win.on('minimize', () => {
+    const userMinimized = win._userMinimized;
+    win._userMinimized = false;
+    if (!userMinimized && win && !win.isDestroyed()) {
+      // System-initiated minimize — restore after Windows finishes transition
+      setTimeout(() => {
+        if (win && !win.isDestroyed() && win.isMinimized()) {
+          win.show();
+        }
+      }, 50);
+    }
+  });
+
+  // ── Re-apply alwaysOnTop ──
+  // On Windows, the WS_EX_TOPMOST flag can be stripped from tool windows
+  // (skipTaskbar: true) in two scenarios:
+  //   1. minimize → restore cycles (Win+D)        → 'show' event
+  //   2. deactivation when clicking another app    → 'blur' event
+  // Use 'screen-saver' level for maximum resistance against Windows
+  // stripping the topmost flag from tool windows.
+  const reapplyTop = () => {
+    if (win.isDestroyed()) return;
+    const state = snapStates.get(data.id);
+    if (state && state.snapped) {
+      win.setAlwaysOnTop(true, 'screen-saver');
+      return;
+    }
+    const note = store.getNote(data.id);
+    if (note && note.pinned) win.setAlwaysOnTop(true, 'screen-saver');
+  };
+
+  win.on('show', reapplyTop);
+
+  win.on('blur', () => {
+    // Defer to next tick so Windows finishes the focus transition
+    // before we re-assert WS_EX_TOPMOST
+    setTimeout(reapplyTop, 0);
+  });
+
+  // ── Periodic alwaysOnTop re-assertion ──
+  // Windows may strip WS_EX_TOPMOST from tool windows at any time,
+  // not only during the events above. A periodic timer keeps
+  // re-applying the flag for notes that should stay on top.
+  // Similar approach used by claude-usage-widget and other
+  // reliable desktop widgets.
+  const _topTimer = setInterval(() => {
+    if (win.isDestroyed()) {
+      clearInterval(_topTimer);
+      return;
+    }
+    const state = snapStates.get(data.id);
+    if (state && state.snapped) {
+      win.setAlwaysOnTop(true, 'screen-saver');
+      return;
+    }
+    const note = store.getNote(data.id);
+    if (note && note.pinned) {
+      win.setAlwaysOnTop(true, 'screen-saver');
+    }
+  }, 2000);
+
   win.on('closed', () => {
+    clearInterval(_topTimer);
     stopHoverPolling(data.id);
+    stopResizeNote(data.id);
+    clearInterval(animationTimers.get(data.id));
+    animationTimers.delete(data.id);
     const state = snapStates.get(data.id);
     if (state) {
       clearTimeout(state._coolingRetryTimer);
@@ -281,7 +372,7 @@ function closeNoteWindow(id) {
 function setPinned(id, pinned) {
   const win = windows.get(id);
   if (win) {
-    win.setAlwaysOnTop(pinned);
+    win.setAlwaysOnTop(pinned, pinned ? 'screen-saver' : 'normal');
     store.saveNote({ id, pinned });
   }
 }
@@ -297,8 +388,12 @@ function minimizeNoteWindow(id) {
   const win = windows.get(id);
   if (win) {
     try {
+      win._userMinimized = true;
       win.minimize();
+      // Safety timeout: clear flag if minimize event never fires
+      setTimeout(() => { if (win && !win.isDestroyed()) win._userMinimized = false; }, 1000);
     } catch (_) {
+      win._userMinimized = false;
       win.hide();
     }
   }
@@ -321,8 +416,11 @@ function focusNote(id) {
 
 function showAllWindows() {
   for (const [id, win] of windows) {
-    win.show();
-    win.focus();
+    if (win && !win.isDestroyed()) {
+      try { win.restore(); } catch (_) { /* ignore if not minimized */ }
+      win.show();
+      win.focus();
+    }
   }
 }
 
@@ -372,6 +470,15 @@ function doSnap(win, id, edge, y, workArea, displayId) {
   }
   snapStates.set(id, state);
 
+  // Persist snap state to survive app restarts
+  store.saveNote({
+    id,
+    snapped: true,
+    snapEdge: edge,
+    snapOriginalBounds: state.originalBounds,
+    snapDisplayId: displayId
+  });
+
   const groupKey = `${edge}-${displayId}`;
   let group = drawerGroups.get(groupKey);
   if (!group) {
@@ -393,11 +500,11 @@ function doSnap(win, id, edge, y, workArea, displayId) {
   recalculateDrawer(groupKey);
 
   // Animate to tab position
-  animateBounds(win, state.tabBounds, 150);
+  animateBounds(win, state.tabBounds, 150, id);
   win.webContents.send('note-snapped', { snapped: true, expanded: false, edge });
 
   // Auto-pin when entering collapsed TAB state
-  if (!win.isDestroyed()) win.setAlwaysOnTop(true);
+  if (!win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver');
 
   // Start polling for hover-to-expand (renderer mouseenter blocked by drag region)
   startHoverPolling(id);
@@ -425,10 +532,19 @@ function unsnapNote(id) {
   state.expanded = false;
   stopHoverPolling(id);
 
+  // Clear snap state from persistent store
+  store.saveNote({
+    id,
+    snapped: false,
+    snapEdge: undefined,
+    snapOriginalBounds: undefined,
+    snapDisplayId: undefined
+  });
+
   // Restore user's pinned preference when exiting snapped state
   const note = store.getNote(id);
   if (note && !win.isDestroyed()) {
-    win.setAlwaysOnTop(!!note.pinned);
+    win.setAlwaysOnTop(!!note.pinned, note.pinned ? 'screen-saver' : 'normal');
   }
 
   const { originalBounds, edge } = state;
@@ -448,7 +564,7 @@ function unsnapNote(id) {
     y: originalBounds.y,
     width: originalBounds.width,
     height: originalBounds.height
-  });
+  }, 150, id);
   win.webContents.send('note-snapped', { snapped: false });
 }
 
@@ -476,11 +592,20 @@ function unsnapInPlace(id, { reposition = false } = {}) {
   state.expanded = false;
   stopHoverPolling(id);
 
+  // Clear snap state from persistent store
+  store.saveNote({
+    id,
+    snapped: false,
+    snapEdge: undefined,
+    snapOriginalBounds: undefined,
+    snapDisplayId: undefined
+  });
+
   // Restore user's pinned preference when exiting snapped state
   {
     const note = store.getNote(id);
     if (note && !win.isDestroyed()) {
-      win.setAlwaysOnTop(!!note.pinned);
+      win.setAlwaysOnTop(!!note.pinned, note.pinned ? 'screen-saver' : 'normal');
     }
   }
 
@@ -541,10 +666,10 @@ function expandSnappedNote(id) {
   group.hoveredId = id;
   state.expanded = true;
   collapseOutsideCounts.set(id, 0); // reset collapse guard on expand
-  animateBounds(win, state.expandedBounds, 200);
+  animateBounds(win, state.expandedBounds, 200, id);
 
   // Ensure expanded note stays on top for easy interaction
-  if (!win.isDestroyed()) win.setAlwaysOnTop(true);
+  if (!win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver');
 
   win.webContents.send('note-snapped', { snapped: true, expanded: true, edge: state.edge });
   win.focus();
@@ -575,12 +700,13 @@ function collapseSnappedNote(id, skipAnimate = false) {
 
   state.expanded = false;
   if (skipAnimate) {
+    clearInterval(animationTimers.get(id));
     if (!win.isDestroyed()) win.setBounds(state.tabBounds);
   } else {
-    animateBounds(win, state.tabBounds, 200);
+    animateBounds(win, state.tabBounds, 200, id);
   }
   // Auto-pin when collapsed to TAB
-  if (!win.isDestroyed()) win.setAlwaysOnTop(true);
+  if (!win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver');
   if (!win.isDestroyed()) {
     win.webContents.send('note-snapped', { snapped: true, expanded: false, edge: state.edge });
   }
@@ -646,14 +772,19 @@ function recalculateDrawer(groupKey) {
 
     // Animate non-expanded windows to tab position
     if (group.hoveredId !== id) {
-      animateBounds(win, state.tabBounds, 120);
+      animateBounds(win, state.tabBounds, 120, id);
     }
   }
 }
 
 // ── Smooth sliding animation with easing ──────────────
-function animateBounds(win, target, duration = 150) {
+function animateBounds(win, target, duration = 150, noteId = null) {
   if (win.isDestroyed()) return;
+
+  // Cancel any active animation on this window before starting a new one
+  if (noteId) {
+    clearInterval(animationTimers.get(noteId));
+  }
 
   const start = win.getBounds();
   const dx = target.x - start.x;
@@ -664,6 +795,7 @@ function animateBounds(win, target, duration = 150) {
   // Skip if change is negligible
   if (Math.abs(dx) < 2 && Math.abs(dy) < 2 && Math.abs(dw) < 2 && Math.abs(dh) < 2) {
     win.setBounds(target);
+    if (noteId) animationTimers.delete(noteId);
     return;
   }
 
@@ -671,8 +803,15 @@ function animateBounds(win, target, duration = 150) {
   const FRAME_MS = 16; // ~60fps, aligned with display refresh
 
   const timer = setInterval(() => {
+    // Stale guard: if this timer has been superseded by a new animation, stop
+    if (noteId && animationTimers.get(noteId) !== timer) {
+      clearInterval(timer);
+      return;
+    }
+
     if (win.isDestroyed()) {
       clearInterval(timer);
+      if (noteId) animationTimers.delete(noteId);
       return;
     }
 
@@ -680,6 +819,7 @@ function animateBounds(win, target, duration = 150) {
     if (elapsed >= duration) {
       win.setBounds(target);
       clearInterval(timer);
+      if (noteId) animationTimers.delete(noteId);
       return;
     }
 
@@ -695,6 +835,45 @@ function animateBounds(win, target, duration = 150) {
       height: Math.round(start.height + dh * eased)
     });
   }, FRAME_MS);
+
+  if (noteId) animationTimers.set(noteId, timer);
+}
+
+// ── Snap State Restoration (after app restart) ─────
+function restoreSnapNote(noteData) {
+  const { id, snapEdge, snapOriginalBounds } = noteData;
+  if (!snapEdge || !snapOriginalBounds) return;
+
+  const win = windows.get(id);
+  if (!win || win.isDestroyed()) return;
+
+  // Resolve display from original coordinates (don't trust stored displayId)
+  const display = screen.getDisplayNearestPoint({
+    x: snapOriginalBounds.x,
+    y: snapOriginalBounds.y
+  });
+  const wa = display.workArea;
+
+  // Validate the window bounds still overlap with an active display
+  const overlapX = snapOriginalBounds.x < wa.x + wa.width &&
+                   snapOriginalBounds.x + snapOriginalBounds.width > wa.x;
+  const overlapY = snapOriginalBounds.y < wa.y + wa.height &&
+                   snapOriginalBounds.y + snapOriginalBounds.height > wa.y;
+
+  if (!overlapX || !overlapY) {
+    // Display configuration changed — clear stale snap data
+    store.saveNote({
+      id, snapped: false,
+      snapEdge: undefined,
+      snapOriginalBounds: undefined,
+      snapDisplayId: undefined
+    });
+    return;
+  }
+
+  // Position window at original location, then re-enter snapped state
+  win.setBounds(snapOriginalBounds);
+  doSnap(win, id, snapEdge, snapOriginalBounds.y, wa, display.id);
 }
 
 module.exports = {

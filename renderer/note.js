@@ -52,7 +52,7 @@ electronAPI.onNoteSnapped(({ snapped, expanded, edge }) => {
 
   if (snapped && !isExpanded) {
     container.classList.add('snapped');
-    container.classList.remove('snapped-expanded');
+    container.classList.remove('snapped-expanded', 'is-collapsing');
 
     // If collapsing from expanded state and mouse is still over the tab
     // (window resize may leave cursor inside new bounds), re-expand
@@ -68,6 +68,7 @@ electronAPI.onNoteSnapped(({ snapped, expanded, edge }) => {
     }
   } else if (snapped && isExpanded) {
     container.classList.add('snapped', 'snapped-expanded');
+    container.classList.remove('is-collapsing');
     // Grace period: ignore mouseleave briefly after expand
     // (window resize during animation can falsely trigger mouseleave)
     expandGraceActive = true;
@@ -76,7 +77,7 @@ electronAPI.onNoteSnapped(({ snapped, expanded, edge }) => {
       expandGraceActive = false;
     }, 80);
   } else {
-    container.classList.remove('snapped', 'snapped-expanded');
+    container.classList.remove('snapped', 'snapped-expanded', 'is-collapsing');
   }
 });
 
@@ -475,16 +476,18 @@ function setupCompactMode() {
 container.addEventListener('mouseenter', () => {
   if (isSnapped && isExpanded && noteData && noteData.id) {
     clearTimeout(collapseTimer);
+    container.classList.remove('is-collapsing');
   }
 });
 
 container.addEventListener('mouseleave', () => {
   if (isSnapped && isExpanded && noteData && noteData.id) {
     if (expandGraceActive) return; // ignore during post-expand grace period
+    container.classList.add('is-collapsing'); // trigger CSS fade-out immediately
     clearTimeout(collapseTimer);
     collapseTimer = setTimeout(() => {
       electronAPI.collapseNote(noteData.id);
-    }, 150);
+    }, 100); // 150→100, .is-collapsing already fading out
   }
 });
 
